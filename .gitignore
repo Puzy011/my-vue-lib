@@ -21,5 +21,8 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
-analysis/reports/*_*.md
+# Generated beat analysis reports (keep EXAMPLE_*)
+analysis/reports/*USDT_*.md
+analysis/reports/scan_*.json
+!analysis/reports/EXAMPLE_*.md
 !analysis/reports/.gitkeep
