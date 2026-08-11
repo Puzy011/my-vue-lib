@@ -26,6 +26,156 @@ UA = {"User-Agent": "Mozilla/5.0 beat-framework/1.0", "Accept": "application/jso
 FUNDING_LONG_CROWDED = 0.05
 FUNDING_SHORT_CROWDED = -0.05
 
+# OI strength thresholds (percent change)
+OI_STRONG = 3.0
+OI_EXTREME = 10.0
+OI_EXTREME_5M = 5.0
+
+
+def classify_oi_strength(
+    oi_changes: Dict[str, Optional[float]],
+    quadrants: Dict[str, str],
+) -> Dict[str, Any]:
+    """Grade OI strength. Deleveraging (Q3/Q4) can never be 极强/强单边."""
+    q_primary = quadrants.get("1h") or quadrants.get("15m") or quadrants.get("4h") or "NA"
+    q24 = quadrants.get("24h") or q_primary
+    vals = {k: oi_changes.get(k) for k in ("5m", "15m", "1h", "4h")}
+
+    # 短线正在减仓/去杠杆 → 禁止极强（即使4h历史变动大）
+    recent_down = (
+        (vals.get("15m") is not None and vals["15m"] < 0)  # type: ignore[index]
+        and (vals.get("1h") is not None and vals["1h"] < 0)  # type: ignore[index]
+    )
+    q_recent = quadrants.get("15m") or quadrants.get("1h") or ""
+    recent_delev_quad = q_recent in ("Q3_涨价减仓", "Q4_跌价减仓")
+
+    buildup_24 = q24 in ("Q1_涨价增仓", "Q2_跌价增仓")
+    # 当前是否仍在增仓：短线OI为正且为Q1/Q2
+    still_building = (
+        not recent_down
+        and not recent_delev_quad
+        and (
+            (vals.get("15m") is not None and vals["15m"] > 0)  # type: ignore[index]
+            or (vals.get("1h") is not None and vals["1h"] > 0)  # type: ignore[index]
+            or (vals.get("5m") is not None and vals["5m"] > 0)  # type: ignore[index]
+        )
+        and (
+            quadrants.get("15m") in ("Q1_涨价增仓", "Q2_跌价增仓")
+            or quadrants.get("1h") in ("Q1_涨价增仓", "Q2_跌价增仓")
+            or quadrants.get("5m") in ("Q1_涨价增仓", "Q2_跌价增仓")
+        )
+    )
+
+    abs_windows = []
+    for k in ("15m", "1h", "4h"):
+        v = vals.get(k)
+        if v is not None:
+            abs_windows.append(abs(v))
+    max_abs = max(abs_windows) if abs_windows else 0.0
+    v5 = vals.get("5m")
+
+    if recent_down or recent_delev_quad or not still_building:
+        direction = "减仓/去杠杆"
+        if "Q3" in (q_recent, q_primary, q24):
+            direction = "涨价减仓"
+        elif "Q4" in (q_recent, q_primary, q24):
+            direction = "跌价减仓"
+        elif buildup_24 and q24 == "Q2_跌价增仓":
+            direction = "空增仓(已回落)"
+        elif buildup_24 and q24 == "Q1_涨价增仓":
+            direction = "多增仓(已回落)"
+        level = "普通"
+        note = "减仓/去杠杆或短线OI回落，大变动不作极强"
+        buildup = False
+        deleveraging = True
+    else:
+        direction = "多增仓" if q24 == "Q1_涨价增仓" or quadrants.get("1h") == "Q1_涨价增仓" else "空增仓"
+        extreme = max_abs >= OI_EXTREME or (
+            v5 is not None and abs(v5) >= OI_EXTREME_5M and v5 > 0
+        )
+        strong = max_abs >= OI_STRONG
+        if extreme:
+            level = "极强"
+            note = "OI极强仅作雷达筛选，非开仓许可"
+        elif strong:
+            level = "强"
+            note = "OI强仅作筛选"
+        else:
+            level = "普通"
+            note = ""
+        buildup = True
+        deleveraging = False
+
+    label = (
+        f"OI强度：{level} ＋ {direction} ＋ "
+        f"5m={vals.get('5m')} 15m={vals.get('15m')} 1h={vals.get('1h')} 4h={vals.get('4h')}"
+    )
+    return {
+        "level": level,
+        "direction": direction,
+        "buildup": buildup,
+        "deleveraging": deleveraging,
+        "label": label,
+        "note": note,
+        "hint": f"OI提示：{level}（仅雷达，未过闸门不得开仓）" if level == "极强" else "",
+    }
+
+def short_term_bear_ema(tf: Dict[str, Any]) -> bool:
+    """EMA 空头：15m or 1h price below ema20 and ema20 < ema50 / 空头排列."""
+    for key in ("15m", "1h"):
+        m = tf.get(key)
+        if not m:
+            continue
+        if m.ma_rel == "空头排列" and m.above_ema20 is False:
+            return True
+        if m.ema20 is not None and m.ema50 is not None and m.above_ema20 is False and m.ema20 < m.ema50:
+            return True
+    return False
+
+
+def short_term_short_buildup(oi_quadrants: Dict[str, str], oi_changes: Dict[str, Optional[float]]) -> bool:
+    """短线空增仓：5m/15m Q2, or OI↑ with implied down-move quadrant."""
+    for k in ("5m", "15m"):
+        if oi_quadrants.get(k) == "Q2_跌价增仓":
+            return True
+        v = oi_changes.get(k)
+        if v is not None and v > 0 and oi_quadrants.get(k) == "Q2_跌价增仓":
+            return True
+    return False
+
+
+def oi_divergence_veto(thesis: str, oi_changes: Dict[str, Optional[float]], oi_quadrants: Dict[str, str]) -> Optional[str]:
+    """短线 OI 背离一票否决."""
+    oi_15 = oi_changes.get("15m")
+    oi_1h = oi_changes.get("1h")
+    if thesis == "做多":
+        # want long buildup; short-term OI falling or Q3 = divergence
+        if oi_15 is not None and oi_15 < 0 and oi_1h is not None and oi_1h < 0:
+            return "短线OI背离一票否决：欲做多但15m/1h减仓"
+        if oi_quadrants.get("15m") == "Q3_涨价减仓":
+            return "短线OI背离一票否决：15m涨价减仓"
+    if thesis == "做空":
+        if oi_15 is not None and oi_15 < 0 and oi_1h is not None and oi_1h < 0:
+            return "短线OI背离一票否决：欲做空但15m/1h减仓"
+        if oi_quadrants.get("15m") in ("Q4_跌价减仓", "Q3_涨价减仓") and (oi_15 or 0) < 0:
+            return "短线OI背离一票否决：短线已去杠杆"
+    return None
+
+
+def tip_chase_veto(chg24: float, pos_pct: Optional[float], thesis: str) -> Optional[str]:
+    """tipH/tipL 不追：靠近区间极端或24h暴涨暴跌后不追开."""
+    if thesis == "做多":
+        if chg24 >= 100:
+            return "24h已翻倍→降级观察/止盈，禁止追开"
+        if pos_pct is not None and pos_pct >= 92:
+            return "tipH不追：价格贴近24h高位"
+    if thesis == "做空":
+        if chg24 <= -50:
+            return "24h深跌后不追空（tipL风险），等反抽"
+        if pos_pct is not None and pos_pct <= 8:
+            return "tipL不追：价格贴近24h低位"
+    return None
+
 
 def http_get(url: str, timeout: float = 25.0) -> Any:
     req = urllib.request.Request(url, headers=UA)
@@ -447,98 +597,141 @@ def decide(a: Analysis) -> None:
     chg24 = primary.chg24 or 0.0
     funding_pct = (primary.funding or 0.0) * 100
 
-    # OI from Gate/OKX extras already merged into a.oi_changes
     q1h = a.oi_quadrants.get("1h", "NA")
     q4h = a.oi_quadrants.get("4h", "NA")
     oi_1h = a.oi_changes.get("1h")
     oi_4h = a.oi_changes.get("4h")
     oi_15m = a.oi_changes.get("15m")
-    oi_strong = False
-    for k in ("15m", "1h", "4h"):
-        v = a.oi_changes.get(k)
-        if v is not None and abs(v) >= 3.0:
-            oi_strong = True
-            break
 
-    # 24h-aligned primary quadrant (price 24h × longest available OI)
     oi_for_24h = oi_4h if oi_4h is not None else oi_1h
     q24 = quadrant(chg24, oi_for_24h)
     a.oi_quadrants["24h"] = q24
     a.oi_changes["24h_proxy"] = oi_for_24h
 
+    # Align 24h dump/pump with OI buildup
+    if chg24 < -5 and oi_for_24h is not None and oi_for_24h > 3:
+        q24 = "Q2_跌价增仓"
+        a.oi_quadrants["24h"] = q24
+    if chg24 > 5 and oi_for_24h is not None and oi_for_24h > 3:
+        q24 = "Q1_涨价增仓"
+        a.oi_quadrants["24h"] = q24
+
+    oi_grade = classify_oi_strength(a.oi_changes, a.oi_quadrants)
+    a.structure["oi_grade"] = oi_grade
+
     struct = a.structure
-    # Candidate thesis: OI is filter only; require Q1/Q2 on 24h or 1h/4h,
-    # and must agree with structure. RANGE => 观望.
+    pos_pct = struct.get("pos_pct")
     thesis = "观望"
+    veto_notes: List[str] = []
+    extreme_watch = False  # 极强但观望
+
     if struct.get("is_range"):
-        a.gate_f = {"pass": False, "note": "RANGE不当单边", "funding_pct": funding_pct}
+        veto_notes.append("RANGE不当单边")
     else:
-        long_oi = q24 == "Q1_涨价增仓" or q1h == "Q1_涨价增仓" or q4h == "Q1_涨价增仓"
-        short_oi = q24 == "Q2_跌价增仓" or q1h == "Q2_跌价增仓" or q4h == "Q2_跌价增仓"
-        # If 24h dump + OI still up on 4h, treat as Q2 even if last 4h bar bounced to Q1
-        if chg24 < -5 and oi_for_24h is not None and oi_for_24h > 3:
-            short_oi = True
-            long_oi = False
-            q24 = "Q2_跌价增仓"
-            a.oi_quadrants["24h"] = q24
-        if chg24 > 5 and oi_for_24h is not None and oi_for_24h > 3:
-            long_oi = True
-            short_oi = False
-            q24 = "Q1_涨价增仓"
-            a.oi_quadrants["24h"] = q24
+        # 以24h象限为主；单根4h阳线反弹造成的Q1不得在大跌日触发开多候选
+        long_oi = q24 == "Q1_涨价增仓" or (
+            chg24 > 0 and (q1h == "Q1_涨价增仓" or q4h == "Q1_涨价增仓")
+        )
+        short_oi = q24 == "Q2_跌价增仓" or (
+            chg24 < 0 and (q1h == "Q2_跌价增仓" or q4h == "Q2_跌价增仓")
+        )
+        # 若24h已强制对齐，覆盖
+        if q24 == "Q1_涨价增仓":
+            long_oi, short_oi = True, False
+        elif q24 == "Q2_跌价增仓":
+            long_oi, short_oi = False, True
+        still_long_build = long_oi and (oi_15m is None or oi_15m >= 0) and (oi_1h is None or oi_1h >= 0)
+        still_short_build = short_oi and (oi_15m is None or oi_15m >= 0) and (oi_1h is None or oi_1h >= -0.5)
 
-        if short_oi and struct.get("regime") in ("单边偏空", "结构分歧"):
-            # short-term OI flush after vertical dump => wait (don't chase)
-            if chg24 < -30 and oi_15m is not None and oi_15m < -1 and oi_1h is not None and oi_1h < 0:
-                thesis = "观望"
-                a.gate_f = {
-                    "pass": False,
-                    "note": f"短周期OI回落(15m/1h减仓)，垂直下跌后不追空；费率={funding_pct:.4f}%",
-                    "funding_pct": funding_pct,
-                }
-            else:
-                thesis = "做空"
-        elif long_oi and struct.get("regime") in ("单边偏多", "结构分歧"):
-            if chg24 > 30 and oi_15m is not None and oi_15m < -1 and oi_1h is not None and oi_1h < 0:
-                thesis = "观望"
-                a.gate_f = {
-                    "pass": False,
-                    "note": f"短周期OI回落，垂直上涨后不追多；费率={funding_pct:.4f}%",
-                    "funding_pct": funding_pct,
-                }
-            else:
-                thesis = "做多"
+        structure_up = struct.get("regime") == "单边偏多" or bool(struct.get("break_up"))
+        structure_dn = struct.get("regime") == "单边偏空" or bool(struct.get("break_down"))
+        ema_bear = short_term_bear_ema(a.tf)
+        st_short_build = short_term_short_buildup(a.oi_quadrants, a.oi_changes)
 
+        # --- 开多硬闸门 ---
+        # 1) 短线空增仓 / EMA空头 → 默认观望，不给现价多
+        can_long = True
+        if st_short_build or ema_bear:
+            can_long = False
+            if long_oi or struct.get("regime") == "单边偏多":
+                veto_notes.append("短线空增仓或EMA空头→禁止现价多，默认观望")
+        # 2) 必须结构UP或突破确认 + OI仍多增仓
+        if long_oi and not (structure_up and still_long_build):
+            can_long = False
+            veto_notes.append("开多未满足：需结构UP/突破确认且OI仍多增仓")
+        if not long_oi:
+            can_long = False
+
+        # --- 开空硬闸门（对称，tipL另判）---
+        can_short = bool(structure_dn and still_short_build and short_oi)
+        if short_oi and not can_short:
+            veto_notes.append("开空未满足：需结构DOWN/跌破且OI仍空增仓（短线减仓不追）")
+
+        if can_long and long_oi and structure_up:
+            thesis = "做多"
+        elif can_short:
+            thesis = "做空"
+        else:
+            thesis = "观望"
+
+        # 短线 OI 背离一票否决
         if thesis in ("做多", "做空"):
-            # structure hard veto
-            if thesis == "做多" and struct.get("regime") == "单边偏空":
+            div = oi_divergence_veto(thesis, a.oi_changes, a.oi_quadrants)
+            if div:
+                veto_notes.append(div)
                 thesis = "观望"
-                a.gate_f = {"pass": False, "note": "结构空头否决做多", "funding_pct": funding_pct}
-            elif thesis == "做空" and struct.get("regime") == "单边偏多":
+
+        # tipH/tipL 不追 + 24h翻倍降级
+        if thesis in ("做多", "做空"):
+            tip = tip_chase_veto(chg24, pos_pct, thesis)
+            if tip:
+                veto_notes.append(tip)
                 thesis = "观望"
-                a.gate_f = {"pass": False, "note": "结构多头否决做空", "funding_pct": funding_pct}
-            else:
-                a.gate_f = apply_gate_f(thesis, funding_pct)
-                if not a.gate_f["pass"]:
-                    thesis = "观望"
-        elif "gate_f" not in a.__dict__ or not a.gate_f:
+
+        # 结构硬否决
+        if thesis == "做多" and struct.get("regime") == "单边偏空":
+            veto_notes.append("结构空头否决做多")
+            thesis = "观望"
+        if thesis == "做空" and struct.get("regime") == "单边偏多":
+            veto_notes.append("结构多头否决做空")
+            thesis = "观望"
+
+        # 闸门 F
+        if thesis in ("做多", "做空"):
+            a.gate_f = apply_gate_f(thesis, funding_pct)
+            if not a.gate_f["pass"]:
+                veto_notes.append(a.gate_f.get("note", "F失败"))
+                thesis = "观望"
+        else:
             a.gate_f = {
                 "pass": False,
-                "note": f"无Q1/Q2单边过滤通过 24h象限={q24} 费率={funding_pct:.4f}%",
+                "note": "；".join(veto_notes) if veto_notes else f"无开仓许可 24h象限={q24}",
                 "funding_pct": funding_pct,
             }
 
-    # TF agreement soft check
+    # TF soft veto
     biases = [a.tf[k].bias for k in ("5m", "15m", "1h", "4h") if k in a.tf]
     if thesis == "做多" and biases.count("偏空") >= 3:
+        veto_notes.append("多周期偏空否决")
         thesis = "观望"
-        a.gate_f = {**a.gate_f, "note": a.gate_f.get("note", "") + " | 多周期偏空否决"}
     if thesis == "做空" and biases.count("偏多") >= 3:
+        veto_notes.append("多周期偏多否决")
         thesis = "观望"
-        a.gate_f = {**a.gate_f, "note": a.gate_f.get("note", "") + " | 多周期偏多否决"}
 
-    # Prefer pullback entry note when vertical already happened
-    a.conclusion = thesis
+    # 极强仍要过结构/背离闸门；未过 → 极强但观望
+    if thesis == "观望" and oi_grade.get("level") == "极强" and oi_grade.get("buildup"):
+        extreme_watch = True
+        a.conclusion = "极强但观望"
+    else:
+        a.conclusion = thesis
+
+    if veto_notes:
+        a.gate_f = a.gate_f or {}
+        a.gate_f["pass"] = thesis in ("做多", "做空")
+        a.gate_f["funding_pct"] = funding_pct
+        prev = a.gate_f.get("note") or ""
+        merged = "；".join(dict.fromkeys([*(prev.split("；") if prev else []), *veto_notes]))
+        a.gate_f["note"] = merged
 
     # Execution
     m15 = a.tf.get("15m")
@@ -553,15 +746,13 @@ def decide(a: Analysis) -> None:
         sl = min(m15.swing_high, entry + 1.5 * atr_proxy) if m15 and m15.swing_high else entry + 1.5 * atr_proxy
         if sl > entry * 1.08:
             sl = entry + 1.5 * atr_proxy
-        risk = sl - entry
-        tp1 = entry - 1.5 * risk
-        tp2 = entry - 2.5 * risk
+        risk = max(sl - entry, last * 0.005)
         a.execution = {
             "side": "做空",
             "entry": round(entry, 6),
             "stop": round(sl, 6),
-            "tp1": round(tp1, 6),
-            "tp2": round(tp2, 6),
+            "tp1": round(entry - 1.5 * risk, 6),
+            "tp2": round(entry - 2.5 * risk, 6),
         }
         a.invalidation = f"15m/1H收盘站上{round(sl,6)}，或转为Q4跌价减仓且波动收敛"
     elif thesis == "做多":
@@ -569,28 +760,32 @@ def decide(a: Analysis) -> None:
         sl = max(m15.swing_low, entry - 1.5 * atr_proxy) if m15 and m15.swing_low else entry - 1.5 * atr_proxy
         if sl < entry * 0.92:
             sl = entry - 1.5 * atr_proxy
-        risk = entry - sl
-        tp1 = entry + 1.5 * risk
-        tp2 = entry + 2.5 * risk
+        risk = max(entry - sl, last * 0.005)
         a.execution = {
             "side": "做多",
             "entry": round(entry, 6),
             "stop": round(sl, 6),
-            "tp1": round(tp1, 6),
-            "tp2": round(tp2, 6),
+            "tp1": round(entry + 1.5 * risk, 6),
+            "tp2": round(entry + 2.5 * risk, 6),
         }
         a.invalidation = f"15m/1H收盘跌破{round(sl,6)}，或转为Q3涨价减仓"
     else:
         a.execution = {"side": "观望", "entry": None, "stop": None, "tp1": None, "tp2": None}
-        a.invalidation = "出现Q1/Q2且非RANGE并过闸门F后再评估"
+        a.invalidation = "需结构UP/DOWN确认 + OI仍同向增仓 + 过闸门F；tipH/tipL不追"
+
+    oi_line = oi_grade["label"]
+    if oi_grade.get("hint"):
+        oi_line += f" | {oi_grade['hint']}"
+    if oi_grade.get("note") and oi_grade["level"] == "普通" and oi_grade.get("deleveraging"):
+        oi_line += f" | {oi_grade['note']}"
 
     a.basis = {
-        "价格": f"主源{primary.venue} {last} | 24h {chg24:.2f}% | 高{high} 低{low} | 位置{struct.get('pos_pct'):.1f}%"
-        if struct.get("pos_pct") is not None
+        "价格": f"主源{primary.venue} {last} | 24h {chg24:.2f}% | 高{high} 低{low} | 位置{pos_pct:.1f}%"
+        if pos_pct is not None
         else f"主源{primary.venue} {last} | 24h {chg24:.2f}%",
-        "OI": f"5m={a.oi_changes.get('5m')} 15m={a.oi_changes.get('15m')} 1h={a.oi_changes.get('1h')} 4h={a.oi_changes.get('4h')} | "
-        f"象限24h={a.oi_quadrants.get('24h')} 1h={q1h} 4h={q4h} | OI强筛选={'Y' if oi_strong else 'N'}",
-        "结构": f"{struct.get('regime')} | 突破上={struct.get('break_up')} 跌破={struct.get('break_down')}",
+        "OI": oi_line + f" | 象限24h={a.oi_quadrants.get('24h')} 1h={q1h} 4h={q4h}",
+        "结构": f"{struct.get('regime')} | 突破上={struct.get('break_up')} 跌破={struct.get('break_down')}"
+        + (" | 极强但观望" if extreme_watch else ""),
         "周期": " / ".join(
             f"{k}:{a.tf[k].bias}/RSI={None if a.tf[k].rsi is None else round(a.tf[k].rsi,1)}/{a.tf[k].ma_rel}/{a.tf[k].candle}"
             for k in ("5m", "15m", "1h", "4h")
@@ -598,11 +793,10 @@ def decide(a: Analysis) -> None:
         ),
         "费率": (a.gate_f or {}).get("note", ""),
     }
-    if thesis == "观望" and chg24 < -20 and struct.get("regime") == "单边偏空":
-        m15 = a.tf.get("15m")
+    if a.conclusion in ("观望", "极强但观望") and chg24 < -20 and struct.get("regime") == "单边偏空":
         trigger = round(m15.swing_high, 6) if m15 and m15.swing_high else round(last * 1.04, 6)
         a.invalidation = (
-            f"现价不追空；若反抽至{trigger}附近且OI再增(Q2)可转做空；失效=收盘站上该反抽高点"
+            f"现价不追；若反抽至{trigger}附近且OI再增(Q2)可评估做空；失效=收盘站上该反抽高点"
         )
 
 
@@ -843,7 +1037,7 @@ def scan_oi_candidates(min_quote_vol: float = 20_000_000) -> List[Dict[str, Any]
     for contract in cands:
         sym = contract.replace("_", "")
         a = analyze_symbol(sym, with_events=False)
-        if a.conclusion in ("做多", "做空"):
+        if a.conclusion in ("做多", "做空", "极强但观望"):
             results.append(
                 {
                     "symbol": a.symbol,
@@ -853,6 +1047,7 @@ def scan_oi_candidates(min_quote_vol: float = 20_000_000) -> List[Dict[str, Any]
                     "失效条件": a.invalidation,
                     "oi": a.oi_changes,
                     "quad": a.oi_quadrants,
+                    "oi_grade": (a.structure or {}).get("oi_grade"),
                 }
             )
     return results

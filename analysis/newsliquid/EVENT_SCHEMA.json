@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/newsliquid/event.schema.json",
+  "title": "NewsliquidRadarEvent",
+  "description": "庄币/OI异动启动雷达事件。只进观察池，不自动开仓。",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "symbol",
+    "ts_utc",
+    "venue",
+    "side_bias",
+    "severity",
+    "payload",
+    "dedupe_key",
+    "cooldown_sec",
+    "pool"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "全局唯一：{event_type}:{symbol}:{bucket_ts}"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": ["OI_SPIKE", "OI_CONCENTRATION", "WHALE_PNL_START"]
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+USDT$"
+    },
+    "ts_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "venue": {
+      "type": "string",
+      "enum": ["Gate", "OKX", "MEXC", "Bybit", "Binance", "Multi"]
+    },
+    "side_bias": {
+      "type": "string",
+      "enum": ["long_build", "short_build", "unknown"],
+      "description": "多增仓/空增仓；减仓事件不应发 SPIKE 极强标签"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["watch", "observe_take_profit", "blocked"],
+      "description": "watch=观察池；observe_take_profit=已大涨/拥挤降级；blocked=缺源或规则禁止"
+    },
+    "severity_reason": { "type": "string" },
+    "dedupe_key": {
+      "type": "string",
+      "description": "去重键：{event_type}:{symbol}:{side_bias}:{tf}"
+    },
+    "cooldown_sec": {
+      "type": "integer",
+      "minimum": 60,
+      "description": "同 dedupe_key 冷却秒数，默认 900"
+    },
+    "pool": {
+      "type": "string",
+      "const": "observe",
+      "description": "固定 observe，禁止 direct_execute"
+    },
+    "thresholds": {
+      "type": "object",
+      "description": "触发时使用的阈值快照，便于回放"
+    },
+    "payload": {
+      "type": "object",
+      "description": "事件类型专用载荷"
+    },
+    "gates_hint": {
+      "type": "object",
+      "description": "给执行层的预检提示（非最终许可）",
+      "properties": {
+        "oi_strength": { "type": "string", "enum": ["普通", "强", "极强"] },
+        "range_suspected": { "type": "boolean" },
+        "funding_pct": { "type": ["number", "null"] },
+        "chg24_pct": { "type": ["number", "null"] },
+        "tip_chase_risk": { "type": "boolean" },
+        "note": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event_type": { "const": "OI_SPIKE" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["tf", "oi_chg_pct", "px_chg_pct", "quadrant"],
+            "properties": {
+              "tf": { "type": "string", "enum": ["5m", "15m", "1h"] },
+              "oi_chg_pct": { "type": "number" },
+              "px_chg_pct": { "type": "number" },
+              "quadrant": {
+                "type": "string",
+                "enum": ["Q1_涨价增仓", "Q2_跌价增仓"]
+              },
+              "oi_usd": { "type": ["number", "null"] }
+            }
+          },
+          "thresholds": {
+            "type": "object",
+            "properties": {
+              "oi_chg_5m_pct": { "type": "number", "default": 5 },
+              "oi_chg_15m_pct": { "type": "number", "default": 8 },
+              "oi_chg_1h_pct": { "type": "number", "default": 10 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event_type": { "const": "OI_CONCENTRATION" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["top_long_size", "top_short_size", "open_interest", "concentration_pct", "aligned"],
+            "properties": {
+              "top_long_size": { "type": "number" },
+              "top_short_size": { "type": "number" },
+              "open_interest": { "type": "number" },
+              "concentration_pct": {
+                "type": "number",
+                "description": "(top_long+top_short)/OI*100 或单边 top/OI"
+              },
+              "dominant_side": { "type": "string", "enum": ["long", "short", "balanced"] },
+              "aligned": {
+                "type": "boolean",
+                "description": "集中度主导方向与价格同向"
+              },
+              "px_chg_pct": { "type": ["number", "null"] }
+            }
+          },
+          "thresholds": {
+            "type": "object",
+            "properties": {
+              "concentration_pct": { "type": "number", "default": 50 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "event_type": { "const": "WHALE_PNL_START" } } },
+      "then": {
+        "properties": {
+          "severity": { "const": "blocked" },
+          "severity_reason": {
+            "type": "string",
+            "description": "无付费聪明钱/PnL源前必须 blocked，禁止假装主力已启动"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "source": { "type": "string" },
+              "pnl_slope_turn_positive": { "type": "boolean" },
+              "position_value_usd": { "type": ["number", "null"] },
+              "available": { "type": "boolean", "const": false }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "event_id": "OI_SPIKE:TUTUSDT:1786422600",
+      "event_type": "OI_SPIKE",
+      "symbol": "TUTUSDT",
+      "ts_utc": "2026-08-11T04:30:00Z",
+      "venue": "Gate",
+      "side_bias": "long_build",
+      "severity": "watch",
+      "severity_reason": "短窗OI异动+多增仓，仅观察池",
+      "dedupe_key": "OI_SPIKE:TUTUSDT:long_build:15m",
+      "cooldown_sec": 900,
+      "pool": "observe",
+      "thresholds": { "oi_chg_15m_pct": 8 },
+      "payload": {
+        "tf": "15m",
+        "oi_chg_pct": 12.4,
+        "px_chg_pct": 9.1,
+        "quadrant": "Q1_涨价增仓",
+        "oi_usd": 8500000
+      },
+      "gates_hint": {
+        "oi_strength": "极强",
+        "range_suspected": false,
+        "funding_pct": 0.02,
+        "chg24_pct": 35.0,
+        "tip_chase_risk": false,
+        "note": "需结构UP+突破确认+OI仍多增仓才可开；OI极强≠开仓许可"
+      }
+    }
+  ]
+}
