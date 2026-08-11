@@ -354,12 +354,54 @@ def run_once(out_path: str, cooldown_path: str, with_whale_stub: bool = False) -
 def main() -> int:
     p = argparse.ArgumentParser(description="newsliquid observe-pool scanner")
     p.add_argument("--once", action="store_true", default=True)
+    p.add_argument("--startup", action="store_true", help="启动期强庄雷达：短窗OI加速+未翻倍+非tipH")
     p.add_argument("--out", default="analysis/newsliquid/watch_pool/latest.json")
     p.add_argument("--cooldown", default=DEFAULT_COOLDOWN_STATE)
     p.add_argument("--whale-stub", action="store_true", help="Emit blocked WHALE_PNL_START stubs")
+    p.add_argument("--ignore-cooldown", action="store_true")
     args = p.parse_args()
+    if args.startup:
+        args.out = args.out if args.out != "analysis/newsliquid/watch_pool/latest.json" else "analysis/newsliquid/watch_pool/startup_latest.json"
+        if args.ignore_cooldown:
+            open(args.cooldown, "w").write("{}")
+        # reuse run_once then filter for startup phase in post; also lower vol floor via analyze
+        result = run_once(args.out, args.cooldown, with_whale_stub=False)
+        # annotate startup preference
+        startup = []
+        for e in result.get("events", []):
+            chg = (e.get("gates_hint") or {}).get("chg24_pct")
+            tip = (e.get("gates_hint") or {}).get("tip_chase_risk")
+            side = e.get("side_bias")
+            if e.get("severity") == "blocked":
+                continue
+            if tip or (chg is not None and chg >= 100):
+                e["startup_phase"] = "降级-禁止追开"
+            elif side == "long_build" and chg is not None and 3 <= chg < 60:
+                e["startup_phase"] = "早期/加速观察"
+                startup.append(e)
+            else:
+                e["startup_phase"] = "非启动多头"
+        result["startup_long_watch"] = startup
+        result["mode"] = "startup"
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(json.dumps({
+            "ts": result["ts_utc"],
+            "mode": "startup",
+            "startup_long_watch": [
+                {"symbol": e["symbol"], "type": e["event_type"], "severity": e["severity"],
+                 "oi_strength": e.get("gates_hint", {}).get("oi_strength"),
+                 "chg24": e.get("gates_hint", {}).get("chg24_pct"),
+                 "payload": e.get("payload"), "reason": e.get("severity_reason")}
+                for e in startup
+            ],
+            "all_events": len(result.get("events") or []),
+            "note": "启动雷达≠开仓；需结构UP+OI仍多增仓+非tipH+闸门F",
+        }, ensure_ascii=False, indent=2))
+        print(f"[wrote] {args.out}")
+        return 0
+
     result = run_once(args.out, args.cooldown, with_whale_stub=args.whale_stub)
-    # compact stdout
     summary = [
         {
             "type": e["event_type"],
