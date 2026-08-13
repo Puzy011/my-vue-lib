@@ -36,62 +36,71 @@ def classify_oi_strength(
     oi_changes: Dict[str, Optional[float]],
     quadrants: Dict[str, str],
 ) -> Dict[str, Any]:
-    """Grade OI strength. Deleveraging (Q3/Q4) can never be 极强/强单边."""
+    """Grade OI strength. Deleveraging (Q3/Q4) can never be 强/极强."""
+    BUILDUP_Q = ("Q1_涨价增仓", "Q2_跌价增仓")
+    DELEV_Q = ("Q3_涨价减仓", "Q4_跌价减仓")
+    SHORT_TFS = ("5m", "15m", "1h")
+
     q_primary = quadrants.get("1h") or quadrants.get("15m") or quadrants.get("4h") or "NA"
     q24 = quadrants.get("24h") or q_primary
     vals = {k: oi_changes.get(k) for k in ("5m", "15m", "1h", "4h")}
 
-    # 短线正在减仓/去杠杆 → 禁止极强（即使4h历史变动大）
-    recent_down = (
-        (vals.get("15m") is not None and vals["15m"] < 0)  # type: ignore[index]
-        and (vals.get("1h") is not None and vals["1h"] < 0)  # type: ignore[index]
-    )
-    q_recent = quadrants.get("15m") or quadrants.get("1h") or ""
-    recent_delev_quad = q_recent in ("Q3_涨价减仓", "Q4_跌价减仓")
-
-    buildup_24 = q24 in ("Q1_涨价增仓", "Q2_跌价增仓")
-    # 当前是否仍在增仓：短线OI为正且为Q1/Q2
-    still_building = (
-        not recent_down
-        and not recent_delev_quad
-        and (
-            (vals.get("15m") is not None and vals["15m"] > 0)  # type: ignore[index]
-            or (vals.get("1h") is not None and vals["1h"] > 0)  # type: ignore[index]
-            or (vals.get("5m") is not None and vals["5m"] > 0)  # type: ignore[index]
-        )
-        and (
-            quadrants.get("15m") in ("Q1_涨价增仓", "Q2_跌价增仓")
-            or quadrants.get("1h") in ("Q1_涨价增仓", "Q2_跌价增仓")
-            or quadrants.get("5m") in ("Q1_涨价增仓", "Q2_跌价增仓")
-        )
-    )
-
-    abs_windows = []
-    for k in ("15m", "1h", "4h"):
+    buildup_wins: List[Tuple[str, float, str]] = []
+    delev_wins: List[Tuple[str, Optional[float], str]] = []
+    for k in ("5m", "15m", "1h", "4h"):
+        q = quadrants.get(k) or ""
         v = vals.get(k)
-        if v is not None:
-            abs_windows.append(abs(v))
-    max_abs = max(abs_windows) if abs_windows else 0.0
-    v5 = vals.get("5m")
+        if q in BUILDUP_Q and v is not None and v > 0:
+            buildup_wins.append((k, v, q))
+        elif q in DELEV_Q or (v is not None and v < 0):
+            delev_wins.append((k, v, q))
 
-    if recent_down or recent_delev_quad or not still_building:
+    short_build = sum(1 for k, _, _ in buildup_wins if k in SHORT_TFS)
+    short_delev = sum(1 for k, _, _ in delev_wins if k in SHORT_TFS)
+    oi_1h = vals.get("1h")
+    # 短线减仓占优、或 1h OI 已回落 → 不作增仓强度
+    still_building = short_build > short_delev and (oi_1h is None or oi_1h >= 0) and bool(buildup_wins)
+
+    fmt = lambda x: "N/A" if x is None else (f"{x:.3f}".rstrip("0").rstrip(".") if isinstance(x, float) else str(x))
+    nums = (
+        f"5m={fmt(vals.get('5m'))} 15m={fmt(vals.get('15m'))} "
+        f"1h={fmt(vals.get('1h'))} 4h={fmt(vals.get('4h'))}"
+    )
+
+    if not still_building:
         direction = "减仓/去杠杆"
-        if "Q3" in (q_recent, q_primary, q24):
-            direction = "涨价减仓"
-        elif "Q4" in (q_recent, q_primary, q24):
-            direction = "跌价减仓"
-        elif buildup_24 and q24 == "Q2_跌价增仓":
-            direction = "空增仓(已回落)"
-        elif buildup_24 and q24 == "Q1_涨价增仓":
-            direction = "多增仓(已回落)"
+        # 优先用 1h → 15m → 5m → 4h → 24h 的象限定方向文案
+        for src in (quadrants.get("1h"), quadrants.get("15m"), quadrants.get("5m"), quadrants.get("4h"), q24):
+            if not src:
+                continue
+            if src.startswith("Q3"):
+                direction = "涨价减仓"
+                break
+            if src.startswith("Q4"):
+                direction = "跌价减仓"
+                break
+            if src.startswith("Q2"):
+                direction = "空增仓(已回落)"
+                break
+            if src.startswith("Q1"):
+                direction = "多增仓(已回落)"
+                break
         level = "普通"
         note = "减仓/去杠杆或短线OI回落，大变动不作极强"
         buildup = False
         deleveraging = True
     else:
-        direction = "多增仓" if q24 == "Q1_涨价增仓" or quadrants.get("1h") == "Q1_涨价增仓" else "空增仓"
+        # 方向取短线最强增仓窗；强度只统计增仓窗（禁止用减仓窗的大 |ΔOI|）
+        short_build_wins = [w for w in buildup_wins if w[0] in SHORT_TFS] or buildup_wins
+        best = max(short_build_wins, key=lambda w: w[1])
+        direction = "多增仓" if best[2].startswith("Q1") else "空增仓"
+
+        strength_vals = [abs(v) for k, v, _ in buildup_wins if k in ("15m", "1h", "4h")]
+        max_abs = max(strength_vals) if strength_vals else 0.0
+        v5_build = next((v for k, v, _ in buildup_wins if k == "5m"), None)
+
         extreme = max_abs >= OI_EXTREME or (
-            v5 is not None and abs(v5) >= OI_EXTREME_5M and v5 > 0
+            v5_build is not None and v5_build >= OI_EXTREME_5M
         )
         strong = max_abs >= OI_STRONG
         if extreme:
@@ -106,10 +115,7 @@ def classify_oi_strength(
         buildup = True
         deleveraging = False
 
-    label = (
-        f"OI强度：{level} ＋ {direction} ＋ "
-        f"5m={vals.get('5m')} 15m={vals.get('15m')} 1h={vals.get('1h')} 4h={vals.get('4h')}"
-    )
+    label = f"OI强度：{level} ＋ {direction} ＋ {nums}"
     return {
         "level": level,
         "direction": direction,
