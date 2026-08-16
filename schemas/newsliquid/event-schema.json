@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/schemas/newsliquid/event-schema.json",
+  "title": "NewsliquidTradingEvent",
+  "description": "观察池事件（非自动跟单）。进执行层前必须过结构闸门 F。",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "symbol",
+    "venue",
+    "ts",
+    "severity",
+    "payload",
+    "severity"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "稳定唯一 ID，用于去重。建议 hash(event_type|symbol|venue|bucket_ts)"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "OI_SPIKE",
+        "OI_CONCENTRATION",
+        "WHALE_PNL_START",
+        "FUNDING_CROWD",
+        "LIQUIDATION_CASCADE",
+        "TOKEN_UNLOCK",
+        "NEWS"
+      ]
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+USDT$",
+      "examples": ["BEATUSDT", "TUTUSDT", "BMTUSDT"]
+    },
+    "venue": {
+      "type": "string",
+      "enum": ["gate", "binance", "okx", "mexc", "bybit", "agg"]
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "bucket_ts": {
+      "type": "integer",
+      "description": "冷却/去重用的时间桶（unix 秒，按 cooldown_sec 对齐）"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["5m", "15m", "1h", "4h"]
+    },
+    "severity": {
+      "type": "object",
+      "required": ["pool", "actionable"],
+      "properties": {
+        "pool": {
+          "type": "string",
+          "const": "observe",
+          "description": "事件只进观察池，默认不可直接开仓"
+        },
+        "actionable": {
+          "type": "boolean",
+          "description": "是否允许进入执行层评估；仍需过闸门 F"
+        },
+        "downgrade_reason": {
+          "type": "string",
+          "description": "费率拥挤/24h翻倍/tip追价等导致降级为观察或止盈"
+        }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "description": "按 event_type 分支的载荷",
+      "oneOf": [
+        { "$ref": "#/$defs/OiSpikePayload" },
+        { "$ref": "#/$defs/OiConcentrationPayload" },
+        { "$ref": "#/$defs/WhalePnlStartPayload" },
+        { "$ref": "#/$defs/GenericPayload" }
+      ]
+    },
+    "oi": {
+      "type": "object",
+      "required": ["strength", "direction", "changes"],
+      "properties": {
+        "strength": {
+          "type": "string",
+          "enum": ["普通", "强", "极强"],
+          "description": "平仓/去杠杆象限禁止标极强"
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["多增仓", "空增仓", "多平仓", "空平仓", "混合", "中性"]
+        },
+        "changes": {
+          "type": "object",
+          "required": ["5m", "15m", "1h", "4h"],
+          "properties": {
+            "5m": { "$ref": "#/$defs/OiWindow" },
+            "15m": { "$ref": "#/$defs/OiWindow" },
+            "1h": { "$ref": "#/$defs/OiWindow" },
+            "4h": { "$ref": "#/$defs/OiWindow" }
+          }
+        },
+        "deleveraging": {
+          "type": "boolean",
+          "description": "true 时 strength 不得为 极强"
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "执行层闸门 F 结果",
+      "properties": {
+        "structure": {
+          "type": "string",
+          "enum": ["UP", "DOWN", "RANGE", "UNKNOWN"]
+        },
+        "structure_ok": { "type": "boolean" },
+        "oi_divergence_veto": { "type": "boolean" },
+        "tip_chase_veto": {
+          "type": "boolean",
+          "description": "tipH/tipL 追单否决"
+        },
+        "ema_short_bias": { "type": "boolean" },
+        "short_oi_build_short_tf": { "type": "boolean" },
+        "funding_crowded": { "type": "boolean" },
+        "doubled_24h": { "type": "boolean" },
+        "final": {
+          "type": "string",
+          "enum": ["做多", "做空", "观望", "极强但观望"]
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "source": { "type": "string" },
+        "dedupe_key": { "type": "string" },
+        "cooldown_sec": {
+          "type": "integer",
+          "default": 300,
+          "description": "同 symbol+event_type 默认冷却 300s"
+        },
+        "notes": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "OiWindow": {
+      "type": "object",
+      "required": ["oi_chg_pct", "px_chg_pct", "quad"],
+      "properties": {
+        "oi_chg_pct": { "type": "number" },
+        "px_chg_pct": { "type": "number" },
+        "quad": {
+          "type": "string",
+          "enum": ["多增仓", "空增仓", "多平仓", "空平仓", "混合", "中性"]
+        }
+      }
+    },
+    "OiSpikePayload": {
+      "type": "object",
+      "required": ["kind", "oi_chg_pct", "window_sec", "quad", "threshold_pct"],
+      "properties": {
+        "kind": { "const": "OI_SPIKE" },
+        "oi_chg_pct": { "type": "number" },
+        "window_sec": { "type": "integer", "minimum": 60 },
+        "quad": {
+          "type": "string",
+          "enum": ["多增仓", "空增仓"]
+        },
+        "threshold_pct": { "type": "number", "default": 3 },
+        "price": { "type": "number" },
+        "oi": { "type": "number" },
+        "oi_usd": { "type": "number" }
+      }
+    },
+    "OiConcentrationPayload": {
+      "type": "object",
+      "required": ["kind", "top_oi_share", "threshold", "aligned_with_price"],
+      "properties": {
+        "kind": { "const": "OI_CONCENTRATION" },
+        "top_long_size": { "type": "number" },
+        "top_short_size": { "type": "number" },
+        "total_oi": { "type": "number" },
+        "top_oi_share": {
+          "type": "number",
+          "description": "(top_long+top_short)/total_oi，0-1"
+        },
+        "threshold": { "type": "number", "default": 0.5 },
+        "aligned_with_price": { "type": "boolean" },
+        "top_lsr_size": { "type": "number" },
+        "proxy": {
+          "type": "string",
+          "const": "gate_top_size",
+          "description": "无聪明钱源时用 Gate top_*_size 代理"
+        }
+      }
+    },
+    "WhalePnlStartPayload": {
+      "type": "object",
+      "required": ["kind", "source_available", "signal"],
+      "properties": {
+        "kind": { "const": "WHALE_PNL_START" },
+        "source_available": {
+          "type": "boolean",
+          "description": "无付费源时必须 false，禁止假装主力已启动"
+        },
+        "signal": {
+          "type": "string",
+          "enum": ["none", "pnl_flip_pos", "slope_pos", "unavailable"]
+        },
+        "side": { "type": "string", "enum": ["long", "short", "unknown"] },
+        "notional_usd": { "type": "number" },
+        "pnl_usd": { "type": "number" }
+      }
+    },
+    "GenericPayload": {
+      "type": "object",
+      "required": ["kind", "summary"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["FUNDING_CROWD", "LIQUIDATION_CASCADE", "TOKEN_UNLOCK", "NEWS"]
+        },
+        "summary": { "type": "string" },
+        "url": { "type": "string" },
+        "severity": { "type": "object", "additionalProperties": true }
+      }
+    }
+  },
+  "examples": [
+    {
+      "event_id": "oi_spike|BEATUSDT|gate|1750000000",
+      "event_type": "OI_SPIKE",
+      "symbol": "BEATUSDT",
+      "venue": "gate",
+      "ts": "2026-08-16T08:00:00Z",
+      "bucket_ts": 1750000000,
+      "timeframe": "15m",
+      "severity": { "pool": "observe", "actionable": true },
+      "payload": {
+        "kind": "OI_SPIKE",
+        "oi_chg_pct": 4.2,
+        "window_sec": 900,
+        "quad": "空增仓",
+        "threshold_pct": 3,
+        "price": 0.43,
+        "oi": 792604
+      },
+      "oi": {
+        "strength": "强",
+        "direction": "空增仓",
+        "deleveraging": false,
+        "changes": {
+          "5m": { "oi_chg_pct": 0.25, "px_chg_pct": 0.55, "quad": "多增仓" },
+          "15m": { "oi_chg_pct": 0.12, "px_chg_pct": -0.3, "quad": "空增仓" },
+          "1h": { "oi_chg_pct": -5.3, "px_chg_pct": -3.35, "quad": "多平仓" },
+          "4h": { "oi_chg_pct": 12.2, "px_chg_pct": -6.5, "quad": "空增仓" }
+        }
+      },
+      "gates": {
+        "structure": "DOWN",
+        "structure_ok": false,
+        "oi_divergence_veto": false,
+        "tip_chase_veto": true,
+        "ema_short_bias": true,
+        "short_oi_build_short_tf": true,
+        "funding_crowded": false,
+        "doubled_24h": false,
+        "final": "观望"
+      },
+      "meta": {
+        "source": "gate.contract_stats",
+        "cooldown_sec": 300,
+        "notes": "事件仅观察；未过结构 UP 闸门"
+      }
+    }
+  ]
+}
