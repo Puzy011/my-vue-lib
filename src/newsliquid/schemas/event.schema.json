@@ -1,0 +1,545 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://newsliquid.local/schemas/event.schema.json",
+  "title": "NewsLiquid Event",
+  "description": "Schema for watchlist-only market events used by NewsLiquid detectors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "detectedAt",
+    "symbol",
+    "market",
+    "summary",
+    "priceContext",
+    "oiContext",
+    "fundingContext",
+    "structureContext",
+    "policy",
+    "eventContext"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 8
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "OI_SPIKE",
+        "OI_CONCENTRATION",
+        "WHALE_PNL_START"
+      ]
+    },
+    "detectedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "symbol": {
+      "type": "string",
+      "pattern": "^[A-Z0-9]+USDT$"
+    },
+    "market": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exchange",
+        "instrumentType",
+        "quoteAsset"
+      ],
+      "properties": {
+        "exchange": {
+          "type": "string",
+          "enum": [
+            "BINANCE",
+            "BYBIT",
+            "OKX",
+            "GATE",
+            "MEXC",
+            "HYPERLIQUID",
+            "OTHER"
+          ]
+        },
+        "instrumentType": {
+          "type": "string",
+          "enum": [
+            "PERPETUAL",
+            "DELIVERY"
+          ]
+        },
+        "quoteAsset": {
+          "type": "string",
+          "const": "USDT"
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 8
+    },
+    "priceContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lastPrice",
+        "high24h",
+        "low24h",
+        "relativePosition24h",
+        "changePct5m",
+        "changePct15m",
+        "changePct1h",
+        "changePct4h"
+      ],
+      "properties": {
+        "lastPrice": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "high24h": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "low24h": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "relativePosition24h": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "changePct5m": {
+          "type": "number"
+        },
+        "changePct15m": {
+          "type": "number"
+        },
+        "changePct1h": {
+          "type": "number"
+        },
+        "changePct4h": {
+          "type": "number"
+        }
+      }
+    },
+    "oiContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oiUsd",
+        "oiStrength",
+        "direction",
+        "changePct5m",
+        "changePct15m",
+        "changePct1h",
+        "changePct4h",
+        "quadrant5m",
+        "quadrant15m",
+        "quadrant1h",
+        "quadrant4h",
+        "isForcedDeleverage"
+      ],
+      "properties": {
+        "oiUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "oiStrength": {
+          "type": "string",
+          "enum": [
+            "NORMAL",
+            "STRONG",
+            "EXTREME"
+          ]
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "LONG_BUILD",
+            "SHORT_BUILD",
+            "SHORT_COVER",
+            "LONG_FLUSH",
+            "MIXED"
+          ]
+        },
+        "changePct5m": {
+          "type": "number"
+        },
+        "changePct15m": {
+          "type": "number"
+        },
+        "changePct1h": {
+          "type": "number"
+        },
+        "changePct4h": {
+          "type": "number"
+        },
+        "quadrant5m": {
+          "$ref": "#/definitions/oiQuadrant"
+        },
+        "quadrant15m": {
+          "$ref": "#/definitions/oiQuadrant"
+        },
+        "quadrant1h": {
+          "$ref": "#/definitions/oiQuadrant"
+        },
+        "quadrant4h": {
+          "$ref": "#/definitions/oiQuadrant"
+        },
+        "isForcedDeleverage": {
+          "type": "boolean"
+        }
+      }
+    },
+    "fundingContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currentFundingRate",
+        "nextFundingRate",
+        "crowding"
+      ],
+      "properties": {
+        "currentFundingRate": {
+          "type": "number"
+        },
+        "nextFundingRate": {
+          "type": "number"
+        },
+        "crowding": {
+          "type": "string",
+          "enum": [
+            "NEUTRAL",
+            "LONG_CROWDED",
+            "SHORT_CROWDED"
+          ]
+        }
+      }
+    },
+    "structureContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "regime",
+        "trend",
+        "breakoutState",
+        "rangeState",
+        "shortTermDivergence"
+      ],
+      "properties": {
+        "regime": {
+          "type": "string",
+          "enum": [
+            "TRENDING",
+            "RANGING"
+          ]
+        },
+        "trend": {
+          "type": "string",
+          "enum": [
+            "UP",
+            "DOWN",
+            "SIDEWAYS"
+          ]
+        },
+        "breakoutState": {
+          "type": "string",
+          "enum": [
+            "NONE",
+            "BREAKOUT_CONFIRMED",
+            "BREAKDOWN_CONFIRMED",
+            "FAILED_BREAKOUT",
+            "FAILED_BREAKDOWN"
+          ]
+        },
+        "rangeState": {
+          "type": "string",
+          "enum": [
+            "AT_RANGE_HIGH",
+            "AT_RANGE_LOW",
+            "MID_RANGE",
+            "NOT_APPLICABLE"
+          ]
+        },
+        "shortTermDivergence": {
+          "type": "boolean"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "watchlistOnly",
+        "routeTo",
+        "dedupeKey",
+        "dedupeWindowSec",
+        "cooldownSec",
+        "thresholdSnapshot",
+        "executionGate"
+      ],
+      "properties": {
+        "watchlistOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "routeTo": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "WATCHLIST",
+              "ALERTS"
+            ]
+          }
+        },
+        "dedupeKey": {
+          "type": "string",
+          "minLength": 8
+        },
+        "dedupeWindowSec": {
+          "type": "integer",
+          "minimum": 60
+        },
+        "cooldownSec": {
+          "type": "integer",
+          "minimum": 60
+        },
+        "thresholdSnapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "oiPct5m",
+            "oiPct15m",
+            "oiPct1h"
+          ],
+          "properties": {
+            "oiPct5m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "oiPct15m": {
+              "type": "number",
+              "minimum": 0
+            },
+            "oiPct1h": {
+              "type": "number",
+              "minimum": 0
+            },
+            "topSharePct": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "pnlTurnUsd": {
+              "type": "number"
+            }
+          }
+        },
+        "executionGate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requiresStructureConfirmation",
+            "rejectOnShortTermOIDivergence",
+            "rejectOnRangeRegime",
+            "rejectOnTipHigh",
+            "rejectOnTipLow",
+            "degradeOnCrowdedFunding",
+            "degradeOnDailyDoubling"
+          ],
+          "properties": {
+            "requiresStructureConfirmation": {
+              "type": "boolean"
+            },
+            "rejectOnShortTermOIDivergence": {
+              "type": "boolean"
+            },
+            "rejectOnRangeRegime": {
+              "type": "boolean"
+            },
+            "rejectOnTipHigh": {
+              "type": "boolean"
+            },
+            "rejectOnTipLow": {
+              "type": "boolean"
+            },
+            "degradeOnCrowdedFunding": {
+              "type": "boolean"
+            },
+            "degradeOnDailyDoubling": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "eventContext": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/oiSpikeContext"
+        },
+        {
+          "$ref": "#/definitions/oiConcentrationContext"
+        },
+        {
+          "$ref": "#/definitions/whalePnlStartContext"
+        }
+      ]
+    }
+  },
+  "definitions": {
+    "oiQuadrant": {
+      "type": "string",
+      "enum": [
+        "LONG_BUILD",
+        "SHORT_BUILD",
+        "SHORT_COVER",
+        "LONG_FLUSH",
+        "MIXED"
+      ]
+    },
+    "oiSpikeContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "window",
+        "triggeredBy",
+        "priceAlignment",
+        "confirmedBy"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "OI_SPIKE"
+        },
+        "window": {
+          "type": "string",
+          "enum": [
+            "5m",
+            "15m",
+            "1h"
+          ]
+        },
+        "triggeredBy": {
+          "type": "string",
+          "enum": [
+            "LONG_BUILD",
+            "SHORT_BUILD"
+          ]
+        },
+        "priceAlignment": {
+          "type": "string",
+          "enum": [
+            "WITH_PRICE",
+            "AGAINST_PRICE"
+          ]
+        },
+        "confirmedBy": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "OI_5M",
+              "OI_15M",
+              "OI_1H",
+              "PRICE_5M",
+              "PRICE_15M",
+              "VOLUME_SPIKE"
+            ]
+          }
+        }
+      }
+    },
+    "oiConcentrationContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "topSharePct",
+        "topShareChangePct",
+        "sameDirectionAsPrice",
+        "participantBucket"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "OI_CONCENTRATION"
+        },
+        "topSharePct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "topShareChangePct": {
+          "type": "number"
+        },
+        "sameDirectionAsPrice": {
+          "type": "boolean"
+        },
+        "participantBucket": {
+          "type": "string",
+          "enum": [
+            "TOP_LONG",
+            "TOP_SHORT",
+            "NET_TOP"
+          ]
+        }
+      }
+    },
+    "whalePnlStartContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "side",
+        "positionValueUsd",
+        "unrealizedPnlUsd",
+        "unrealizedPnlChangeUsd",
+        "turnedPositive",
+        "sourceReliability"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "WHALE_PNL_START"
+        },
+        "side": {
+          "type": "string",
+          "enum": [
+            "LONG",
+            "SHORT"
+          ]
+        },
+        "positionValueUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unrealizedPnlUsd": {
+          "type": "number"
+        },
+        "unrealizedPnlChangeUsd": {
+          "type": "number"
+        },
+        "turnedPositive": {
+          "type": "boolean"
+        },
+        "sourceReliability": {
+          "type": "string",
+          "enum": [
+            "ESTIMATED",
+            "DIRECT"
+          ]
+        }
+      }
+    }
+  }
+}

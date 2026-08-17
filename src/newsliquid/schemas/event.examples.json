@@ -1,0 +1,248 @@
+[
+  {
+    "schemaVersion": "1.0.0",
+    "eventId": "evt_oi_spike_btc_20260812_071500",
+    "eventType": "OI_SPIKE",
+    "detectedAt": "2026-08-12T07:15:00Z",
+    "symbol": "BTCUSDT",
+    "market": {
+      "exchange": "BYBIT",
+      "instrumentType": "PERPETUAL",
+      "quoteAsset": "USDT"
+    },
+    "summary": "BTCUSDT 15m OI spike with long build and structure breakout confirmed.",
+    "priceContext": {
+      "lastPrice": 63750.5,
+      "high24h": 64120.0,
+      "low24h": 62480.0,
+      "relativePosition24h": 0.77,
+      "changePct5m": 0.42,
+      "changePct15m": 1.16,
+      "changePct1h": 1.93,
+      "changePct4h": 2.88
+    },
+    "oiContext": {
+      "oiUsd": 2480000000,
+      "oiStrength": "STRONG",
+      "direction": "LONG_BUILD",
+      "changePct5m": 1.9,
+      "changePct15m": 4.8,
+      "changePct1h": 7.2,
+      "changePct4h": 10.6,
+      "quadrant5m": "LONG_BUILD",
+      "quadrant15m": "LONG_BUILD",
+      "quadrant1h": "LONG_BUILD",
+      "quadrant4h": "LONG_BUILD",
+      "isForcedDeleverage": false
+    },
+    "fundingContext": {
+      "currentFundingRate": 0.000074,
+      "nextFundingRate": 0.000082,
+      "crowding": "NEUTRAL"
+    },
+    "structureContext": {
+      "regime": "TRENDING",
+      "trend": "UP",
+      "breakoutState": "BREAKOUT_CONFIRMED",
+      "rangeState": "NOT_APPLICABLE",
+      "shortTermDivergence": false
+    },
+    "policy": {
+      "watchlistOnly": true,
+      "routeTo": [
+        "WATCHLIST",
+        "ALERTS"
+      ],
+      "dedupeKey": "OI_SPIKE:BYBIT:BTCUSDT:15m:LONG_BUILD",
+      "dedupeWindowSec": 900,
+      "cooldownSec": 1800,
+      "thresholdSnapshot": {
+        "oiPct5m": 1.5,
+        "oiPct15m": 3.5,
+        "oiPct1h": 6.0
+      },
+      "executionGate": {
+        "requiresStructureConfirmation": true,
+        "rejectOnShortTermOIDivergence": true,
+        "rejectOnRangeRegime": true,
+        "rejectOnTipHigh": true,
+        "rejectOnTipLow": true,
+        "degradeOnCrowdedFunding": true,
+        "degradeOnDailyDoubling": true
+      }
+    },
+    "eventContext": {
+      "kind": "OI_SPIKE",
+      "window": "15m",
+      "triggeredBy": "LONG_BUILD",
+      "priceAlignment": "WITH_PRICE",
+      "confirmedBy": [
+        "OI_15M",
+        "PRICE_15M",
+        "VOLUME_SPIKE"
+      ]
+    }
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "eventId": "evt_oi_concentration_tut_20260812_071600",
+    "eventType": "OI_CONCENTRATION",
+    "detectedAt": "2026-08-12T07:16:00Z",
+    "symbol": "TUTUSDT",
+    "market": {
+      "exchange": "GATE",
+      "instrumentType": "PERPETUAL",
+      "quoteAsset": "USDT"
+    },
+    "summary": "TUTUSDT top-holder OI concentration crossed threshold and moved with price.",
+    "priceContext": {
+      "lastPrice": 0.0186,
+      "high24h": 0.0198,
+      "low24h": 0.0151,
+      "relativePosition24h": 0.74,
+      "changePct5m": 0.95,
+      "changePct15m": 2.14,
+      "changePct1h": 5.61,
+      "changePct4h": 9.73
+    },
+    "oiContext": {
+      "oiUsd": 36200000,
+      "oiStrength": "EXTREME",
+      "direction": "LONG_BUILD",
+      "changePct5m": 2.4,
+      "changePct15m": 5.2,
+      "changePct1h": 12.5,
+      "changePct4h": 21.4,
+      "quadrant5m": "LONG_BUILD",
+      "quadrant15m": "LONG_BUILD",
+      "quadrant1h": "LONG_BUILD",
+      "quadrant4h": "LONG_BUILD",
+      "isForcedDeleverage": false
+    },
+    "fundingContext": {
+      "currentFundingRate": 0.00028,
+      "nextFundingRate": 0.00031,
+      "crowding": "LONG_CROWDED"
+    },
+    "structureContext": {
+      "regime": "TRENDING",
+      "trend": "UP",
+      "breakoutState": "BREAKOUT_CONFIRMED",
+      "rangeState": "NOT_APPLICABLE",
+      "shortTermDivergence": false
+    },
+    "policy": {
+      "watchlistOnly": true,
+      "routeTo": [
+        "WATCHLIST"
+      ],
+      "dedupeKey": "OI_CONCENTRATION:GATE:TUTUSDT:NET_TOP",
+      "dedupeWindowSec": 1800,
+      "cooldownSec": 3600,
+      "thresholdSnapshot": {
+        "oiPct5m": 2.0,
+        "oiPct15m": 4.0,
+        "oiPct1h": 8.0,
+        "topSharePct": 0.5
+      },
+      "executionGate": {
+        "requiresStructureConfirmation": true,
+        "rejectOnShortTermOIDivergence": true,
+        "rejectOnRangeRegime": true,
+        "rejectOnTipHigh": true,
+        "rejectOnTipLow": true,
+        "degradeOnCrowdedFunding": true,
+        "degradeOnDailyDoubling": true
+      }
+    },
+    "eventContext": {
+      "kind": "OI_CONCENTRATION",
+      "topSharePct": 0.57,
+      "topShareChangePct": 0.09,
+      "sameDirectionAsPrice": true,
+      "participantBucket": "NET_TOP"
+    }
+  },
+  {
+    "schemaVersion": "1.0.0",
+    "eventId": "evt_whale_pnl_hype_20260812_071700",
+    "eventType": "WHALE_PNL_START",
+    "detectedAt": "2026-08-12T07:17:00Z",
+    "symbol": "HYPEUSDT",
+    "market": {
+      "exchange": "HYPERLIQUID",
+      "instrumentType": "PERPETUAL",
+      "quoteAsset": "USDT"
+    },
+    "summary": "HYPEUSDT large tracked wallet flipped unrealized PnL positive with upward slope.",
+    "priceContext": {
+      "lastPrice": 55.14,
+      "high24h": 56.09,
+      "low24h": 53.42,
+      "relativePosition24h": 0.64,
+      "changePct5m": 0.26,
+      "changePct15m": 0.73,
+      "changePct1h": 1.41,
+      "changePct4h": 2.05
+    },
+    "oiContext": {
+      "oiUsd": 1180500000,
+      "oiStrength": "STRONG",
+      "direction": "LONG_BUILD",
+      "changePct5m": 0.8,
+      "changePct15m": 2.1,
+      "changePct1h": 4.9,
+      "changePct4h": 8.2,
+      "quadrant5m": "LONG_BUILD",
+      "quadrant15m": "LONG_BUILD",
+      "quadrant1h": "LONG_BUILD",
+      "quadrant4h": "LONG_BUILD",
+      "isForcedDeleverage": false
+    },
+    "fundingContext": {
+      "currentFundingRate": 0.0001,
+      "nextFundingRate": 0.00012,
+      "crowding": "NEUTRAL"
+    },
+    "structureContext": {
+      "regime": "TRENDING",
+      "trend": "UP",
+      "breakoutState": "NONE",
+      "rangeState": "MID_RANGE",
+      "shortTermDivergence": false
+    },
+    "policy": {
+      "watchlistOnly": true,
+      "routeTo": [
+        "WATCHLIST"
+      ],
+      "dedupeKey": "WHALE_PNL_START:HYPERLIQUID:HYPEUSDT:LONG",
+      "dedupeWindowSec": 3600,
+      "cooldownSec": 14400,
+      "thresholdSnapshot": {
+        "oiPct5m": 0.5,
+        "oiPct15m": 1.5,
+        "oiPct1h": 3.0,
+        "pnlTurnUsd": 250000
+      },
+      "executionGate": {
+        "requiresStructureConfirmation": true,
+        "rejectOnShortTermOIDivergence": true,
+        "rejectOnRangeRegime": true,
+        "rejectOnTipHigh": true,
+        "rejectOnTipLow": true,
+        "degradeOnCrowdedFunding": true,
+        "degradeOnDailyDoubling": true
+      }
+    },
+    "eventContext": {
+      "kind": "WHALE_PNL_START",
+      "side": "LONG",
+      "positionValueUsd": 7800000,
+      "unrealizedPnlUsd": 315000,
+      "unrealizedPnlChangeUsd": 428000,
+      "turnedPositive": true,
+      "sourceReliability": "DIRECT"
+    }
+  }
+]
