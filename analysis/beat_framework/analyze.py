@@ -10,8 +10,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
+import os
 import sys
 import time
 import urllib.error
@@ -577,6 +579,18 @@ def apply_gate_f(thesis: str, funding_pct: Optional[float]) -> Dict[str, Any]:
     return {"pass": True, "note": f"F过闸 费率={funding_pct:.4f}%", "funding_pct": funding_pct}
 
 
+def newsliquid_execution_hint(events_list: List[Dict[str, Any]], thesis: str) -> Optional[str]:
+    """观察池事件降级：费率拥挤/翻倍/tip → 禁止追开。"""
+    for e in events_list:
+        if e.get("event_type") == "WHALE_PNL_START" and e.get("severity") == "blocked":
+            continue
+        if e.get("severity") == "observe_take_profit" and thesis in ("做多", "做空"):
+            return f"newsliquid降级：{e.get('severity_reason') or '观察/止盈，禁止追开'}"
+        if e.get("startup_phase") == "降级-禁止追开" and thesis == "做多":
+            return "newsliquid启动雷达：降级-禁止追开"
+    return None
+
+
 def decide(a: Analysis) -> None:
     # pick primary quote: prefer Gate > OKX > MEXC > Bybit > Binance
     primary = None
@@ -709,6 +723,13 @@ def decide(a: Analysis) -> None:
                 "funding_pct": funding_pct,
             }
 
+    nl_events = (a.events.get("newsliquid") or {}).get("events") or []
+    if thesis in ("做多", "做空") and nl_events:
+        nl_veto = newsliquid_execution_hint(nl_events, thesis)
+        if nl_veto:
+            veto_notes.append(nl_veto)
+            thesis = "观望"
+
     # TF soft veto
     biases = [a.tf[k].bias for k in ("5m", "15m", "1h", "4h") if k in a.tf]
     if thesis == "做多" and biases.count("偏空") >= 3:
@@ -800,6 +821,47 @@ def decide(a: Analysis) -> None:
         )
 
 
+def load_newsliquid_pool(symbol: str) -> List[Dict[str, Any]]:
+    """读取观察池落盘 + 单币实时扫描（OI_SPIKE / OI_CONCENTRATION）。"""
+    sym = norm_symbol(symbol)
+    found: List[Dict[str, Any]] = []
+    pool_files = [
+        ("analysis/newsliquid/watch_pool/startup_latest.json", ["startup_long_watch", "events"]),
+        ("analysis/newsliquid/watch_pool/latest.json", ["events"]),
+    ]
+    for path, keys in pool_files:
+        full = os.path.join(os.path.dirname(__file__), "..", "..", path)
+        try:
+            with open(full, encoding="utf-8") as f:
+                data = json.load(f)
+            for key in keys:
+                for e in data.get(key) or []:
+                    if e.get("symbol") == sym:
+                        found.append({**e, "source": f"pool:{path}"})
+        except Exception:  # noqa: BLE001
+            continue
+    try:
+        scan_path = os.path.join(os.path.dirname(__file__), "..", "newsliquid", "scan_events.py")
+        spec = importlib.util.spec_from_file_location("newsliquid_scan", scan_path)
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            live = mod.scan_symbol_events(sym, startup_mode=True)
+            for e in live:
+                found.append({**e, "source": "live_scan"})
+    except Exception as exc:  # noqa: BLE001
+        found.append(
+            {
+                "event_type": "SCAN_ERROR",
+                "symbol": sym,
+                "severity": "blocked",
+                "severity_reason": f"live_scan失败: {exc}",
+                "source": "live_scan",
+            }
+        )
+    return found
+
+
 def fetch_events(symbol: str) -> Dict[str, Any]:
     base = base_of(symbol)
     out: Dict[str, Any] = {
@@ -809,6 +871,11 @@ def fetch_events(symbol: str) -> Dict[str, Any]:
         "whales": "N/A（当前环境无大额转账接口）",
         "social": "N/A",
         "news": [],
+        "newsliquid": {
+            "pool": "observe",
+            "note": "事件只观察不自动跟单；WHALE_PNL_START 无源前 blocked",
+            "events": load_newsliquid_pool(symbol),
+        },
     }
     # CryptoPanic
     cp, err = safe_get(
@@ -933,27 +1000,41 @@ def to_dict(a: Analysis) -> Dict[str, Any]:
     }
 
 
-def format_report(a: Analysis) -> str:
-    lines: List[str] = []
-    lines.append(f"# {a.symbol} Beat固定框架报告")
-    lines.append(f"- 时间：{a.ts_utc}")
-    lines.append(f"- 数据源：{a.sources}")
-    lines.append("")
-    lines.append("## 统一结论")
-    lines.append(f"•结论：{a.conclusion}")
-    lines.append("•依据：")
-    for k, v in a.basis.items():
-        lines.append(f"  - {k}：{v}")
+def format_unified_block(a: Analysis) -> str:
+    """统一四段输出（用户触发 xxxusdt现价做多还是做空 时置顶）。"""
     exe = a.execution
     if exe.get("side") == "观望":
-        lines.append("•执行单：观望（不下手）")
+        exec_line = "•执行单：观望（不下手）"
     else:
-        lines.append(
-            f"•执行单：{exe.get('side')} / 入场 {exe.get('entry')} / 止损 {exe.get('stop')} / 止盈 {exe.get('tp1')} → {exe.get('tp2')}"
+        exec_line = (
+            f"•执行单：{exe.get('side')} / 入场 {exe.get('entry')} / "
+            f"止损 {exe.get('stop')} / 止盈 {exe.get('tp1')} → {exe.get('tp2')}"
         )
-    lines.append(f"•失效条件：{a.invalidation}")
+    basis_parts = [f"{k}：{v}" for k, v in a.basis.items()]
+    lines = [
+        f"•结论：{a.conclusion}",
+        "•依据：" + "；".join(basis_parts),
+        exec_line,
+        f"•失效条件：{a.invalidation}",
+    ]
+    return "\n".join(lines)
+
+
+def format_report(a: Analysis) -> str:
+    lines: List[str] = []
+    lines.append(f"# {a.symbol} 固定框架分析报告")
+    lines.append(f"- 时间：{a.ts_utc}")
+    lines.append(f"- 数据源：{a.sources}")
+    lines.append(f"- 框架规范：`docs/trading/ANALYSIS_FRAMEWORK.md`")
     lines.append("")
-    lines.append("## 1 交易行情·现价")
+    lines.append("## 统一结论（置顶）")
+    lines.append(format_unified_block(a))
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## 1. 交易行情")
+    lines.append("")
+    lines.append("### 1.1 多所现价")
     lines.append("|交易所|现价|24h高|24h低|涨跌%|位置%|费率%|状态|")
     lines.append("|---|---:|---:|---:|---:|---:|---:|---|")
     for name, q in a.quotes.items():
@@ -966,16 +1047,22 @@ def format_report(a: Analysis) -> str:
             f"{None if pos is None else round(pos,1)}|{None if q.funding is None else round(q.funding*100,4)}|OK|"
         )
     lines.append("")
-    lines.append("## 2 OI四象限")
+    lines.append("### 1.2 OI 四象限")
     lines.append("|周期|ΔOI%|象限|")
     lines.append("|---|---:|---|")
     for tf in ("5m", "15m", "1h", "4h"):
         lines.append(f"|{tf}|{a.oi_changes.get(tf)}|{a.oi_quadrants.get(tf)}|")
+    oi_grade = (a.structure or {}).get("oi_grade") or {}
+    lines.append(f"- OI筛选：{oi_grade.get('label', 'N/A')}")
+    lines.append(f"- RANGE：{'是（禁止当单边）' if a.structure.get('is_range') else '否'}")
     lines.append("")
-    lines.append("## 3 结构")
-    lines.append(json.dumps(a.structure, ensure_ascii=False))
+    lines.append("### 1.3 结构")
+    lines.append(
+        f"- 体制：{a.structure.get('regime')} | 突破上={a.structure.get('break_up')} "
+        f"跌破={a.structure.get('break_down')} | 位置={a.structure.get('pos_pct')}"
+    )
     lines.append("")
-    lines.append("## 4 周期 RSI/均线/阴阳")
+    lines.append("### 1.4 多周期 RSI / 均线 / 阴阳")
     lines.append("|周期|RSI|均线|阴阳|偏向|")
     lines.append("|---|---:|---|---|---|")
     for tf in ("5m", "15m", "1h", "4h"):
@@ -986,19 +1073,57 @@ def format_report(a: Analysis) -> str:
             f"|{tf}|{None if m.rsi is None else round(m.rsi,1)}|{m.ma_rel}|{m.candle}|{m.bias}|"
         )
     lines.append("")
-    lines.append("## 5 资金费率 / 闸门F")
-    lines.append(json.dumps(a.gate_f, ensure_ascii=False))
-    lines.append("")
-    lines.append("## 6 事件 / 舆情 / 链上 / 大额转账")
+    lines.append("## 2. 链上交易")
     ev = a.events or {}
+    lines.append(f"- {ev.get('onchain')}")
+    lines.append("")
+    lines.append("## 3. 舆情（新闻、社交）")
+    lines.append(f"- 社交/趋势：{ev.get('social')}")
+    for item in ev.get("news") or []:
+        lines.append(f"- {json.dumps(item, ensure_ascii=False)}")
+    lines.append("")
+    lines.append("## 4. 大额转账")
+    lines.append(f"- {ev.get('whales')}")
+    lines.append("")
+    lines.append("## 5. 衍生品 OI / 资金费（Bybit / Gate 等）")
+    lines.append("|源|OI(USD)|5m|15m|1h|4h|资金费率%|闸门F|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---|")
+    gate = a.quotes.get("Gate")
+    byb = a.quotes.get("Bybit")
+    primary_oi = a.oi_changes
+    gate_f_note = (a.gate_f or {}).get("note", "N/A")
+    gate_f_pass = "过" if (a.gate_f or {}).get("pass") else "失败"
+    if gate and gate.last is not None:
+        lines.append(
+            f"|Gate(主)|{gate.oi_usd}|{primary_oi.get('5m')}|{primary_oi.get('15m')}|"
+            f"{primary_oi.get('1h')}|{primary_oi.get('4h')}|"
+            f"{None if gate.funding is None else round(gate.funding*100,4)}|{gate_f_pass}|"
+        )
+    if byb and byb.last is not None:
+        lines.append(
+            f"|Bybit|{byb.oi_usd}|N/A|N/A|N/A|N/A|"
+            f"{None if byb.funding is None else round(byb.funding*100,4)}|参考|"
+        )
+    elif byb and byb.error:
+        lines.append(f"|Bybit|N/A|N/A|N/A|N/A|N/A|N/A|{byb.error}|")
+    lines.append(f"- 闸门F说明：{gate_f_note}")
+    lines.append("")
+    lines.append("## 6. CryptoPanic / 专业新闻")
     lines.append(f"- CryptoPanic：{ev.get('cryptopanic')}")
-    lines.append(f"- 舆情/社交：{ev.get('social')}")
-    lines.append(f"- 链上：{ev.get('onchain')}")
-    lines.append(f"- 大额转账：{ev.get('whales')}")
+    lines.append("")
+    lines.append("## 7. 市场环境")
+    lines.append(json.dumps(a.market, ensure_ascii=False, indent=2))
     lines.append(f"- Fear&Greed：{ev.get('fear_greed')}")
     lines.append("")
-    lines.append("## 7 市场环境")
-    lines.append(json.dumps(a.market, ensure_ascii=False))
+    lines.append("## 8. newsliquid 观察池事件（不自动跟单）")
+    nl = ev.get("newsliquid") or {}
+    lines.append(f"- 说明：{nl.get('note')}")
+    for e in nl.get("events") or []:
+        lines.append(
+            f"- [{e.get('event_type')}] {e.get('symbol')} severity={e.get('severity')} "
+            f"side={e.get('side_bias')} source={e.get('source')} "
+            f"reason={e.get('severity_reason')}"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -1077,6 +1202,8 @@ def main() -> int:
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        print(format_unified_block(a))
+        print("")
         print(report)
 
     out = args.out or f"analysis/reports/{a.symbol}_{int(time.time())}.md"

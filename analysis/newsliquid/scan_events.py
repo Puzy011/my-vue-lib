@@ -193,6 +193,29 @@ def oi_strength_from_chg(oi_chg: float) -> str:
     return "普通"
 
 
+def norm_symbol(raw: str) -> str:
+    s = raw.strip().upper().replace("-", "").replace("_", "").replace("/", "")
+    if not s.endswith("USDT"):
+        s = s + "USDT"
+    return s
+
+
+def fetch_gate_ticker(symbol: str) -> Optional[dict]:
+    contract = norm_symbol(symbol).replace("USDT", "_USDT")
+    data, err = safe_get(f"https://api.gateio.ws/api/v4/futures/usdt/tickers?contract={contract}")
+    if err or not data:
+        return None
+    return data[0]
+
+
+def scan_symbol_events(symbol: str, startup_mode: bool = False) -> List[Dict[str, Any]]:
+    """单币 newsliquid 事件扫描（供分析框架第 6 步引用）。"""
+    ticker = fetch_gate_ticker(symbol)
+    if not ticker:
+        return []
+    return analyze_contract(ticker, oi_accel_priority=startup_mode)
+
+
 def scan_gate_universe(limit: int = 40, extra_symbols: Optional[List[str]] = None) -> List[dict]:
     data, err = safe_get("https://api.gateio.ws/api/v4/futures/usdt/tickers")
     if err or not data:

@@ -29,7 +29,12 @@
 ## 命令
 
 ```bash
+# 推荐统一入口
+python3 scripts/analyze_contract.py BEATUSDT
+
 python3 analysis/beat_framework/analyze.py BEATUSDT
 python3 analysis/beat_framework/analyze.py --scan
-python3 analysis/newsliquid/scan_events.py --once
+python3 analysis/newsliquid/scan_events.py --startup
 ```
+
+完整规范见 `docs/trading/ANALYSIS_FRAMEWORK.md`。
