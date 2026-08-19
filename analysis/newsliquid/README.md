@@ -19,6 +19,7 @@
 |------|------|
 | `EVENT_SCHEMA.json` | 事件 JSON Schema（字段/阈值/去重/冷却） |
 | `scan_events.py` | MVP 扫描：OI_SPIKE + OI_CONCENTRATION |
+| `scan_ambush.py` | 拉升/大跌埋伏筛选（位置闸门，禁止 tipH/tipL） |
 | `watch_pool/` | 观察池落盘（gitignore 大文件可保留样例） |
 
 ## 运行
@@ -31,6 +32,9 @@ python3 analysis/newsliquid/scan_events.py --once --out analysis/newsliquid/watc
 # 启动期强庄雷达：OI 加速优先选窗 + 优先重扫
 python3 analysis/newsliquid/scan_events.py --startup
 python3 analysis/newsliquid/scan_events.py --startup --ignore-cooldown  # 强制全量重扫
+
+# 拉升/大跌埋伏（中位、未贴高贴低；仍须过结构闸门）
+python3 analysis/newsliquid/scan_ambush.py
 ```
 
 ### 启动期强庄 + OI 加速优先重扫
