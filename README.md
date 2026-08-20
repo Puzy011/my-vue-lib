@@ -28,29 +28,34 @@ npm run lint
 ### Customize configuration
 See [Configuration Reference](https://cli.vuejs.org/config/).
 
+## 合约固定分析框架（强制）
+
+用户问 `xxxusdt现价做多还是做空` 时，按 `AGENTS.md` + `analysis/beat_framework/RULES.md` 执行。
+
+```bash
+python3 analysis/beat_framework/analyze.py BEATUSDT
+python3 analysis/newsliquid/scan_events.py --once
+```
+
+| 路径 | 作用 |
+|------|------|
+| `analysis/beat_framework/` | 8 步规则、报告模板、拉数引擎 |
+| `analysis/newsliquid/` | 庄币启动雷达（观察池，禁止自动跟单） |
+| `src/newsliquid/schemas/` | 前端/校验用事件 JSON Schema |
+| `AGENTS.md` | Agent 强制执行入口 |
+
 ## NewsLiquid event schema
 
-This repository now includes a minimal event schema for watchlist-only market events:
+Watchlist-only market events (no auto-open):
 
 - `src/newsliquid/schemas/event.schema.json`
 - `src/newsliquid/schemas/event.examples.json`
 - `tests/unit/newsliquidEventSchema.spec.js`
 
-Current supported event types:
+Event types: `OI_SPIKE` · `OI_CONCENTRATION` · `WHALE_PNL_START`
 
-- `OI_SPIKE`
-- `OI_CONCENTRATION`
-- `WHALE_PNL_START`
+Rules baked in: structure confirmation required; short-term OI divergence / RANGE veto; crowded funding or 24h double → degrade to observe/take-profit.
 
-Design rules baked into the schema:
-
-- Events are watchlist-only and do not auto-open positions.
-- Structure confirmation is required before execution.
-- Short-term OI divergence and range regime can veto execution.
-- Crowded funding and daily doubling should degrade an event to observation.
-
-Quick validation without installing frontend dependencies:
-
-```
+```bash
 npm run validate:schema
 ```
