@@ -1,0 +1,7 @@
+# Keep examples; ignore timestamped / latest runtime dumps
+BEATUSDT_[0-9]*.md
+LATEST_*.md
+*_scan_*.json
+scan_*.json
+!EXAMPLE_*.md
+!.gitkeep
